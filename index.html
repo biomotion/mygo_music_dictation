@@ -222,6 +222,13 @@
         <option value="0.55">快</option>
       </select>
     </label>
+    <label class="setting" data-modes="single interval degree chord">音色
+      <select id="timbreSel">
+        <option value="piano" selected>鋼琴</option>
+        <option value="violin">小提琴</option>
+        <option value="guitar">吉他</option>
+      </select>
+    </label>
     <label class="setting" data-modes="single">
       <input type="checkbox" id="sharpsChk"> 包含黑鍵（升記號）</label>
     <label class="setting" data-modes="single">
@@ -389,9 +396,16 @@ function checkAudioHealth() {
   else
     showAudioWarn('播不出聲音嗎？請確認手機未開靜音（iPhone 看側邊靜音開關有沒有橘色）、媒體音量已開，再點一次播放。');
 }
-// 簡易鋼琴音色：基音 + 泛音，指數衰減
+// 三種音色都以 freqOf(midi) 為精確基音，只改泛音結構與包絡，確保聽寫音準不跑掉
 function playTone(midi, when, dur = 0.9, vol = 0.45) {
   const f = freqOf(midi);
+  const tb = timbreSel ? timbreSel.value : 'piano';
+  if (tb === 'violin') return playViolin(f, when, dur, vol);
+  if (tb === 'guitar') return playGuitar(f, when, dur, vol);
+  return playPiano(f, when, dur, vol);
+}
+// 鋼琴：基音 + 泛音，快速 attack、指數衰減
+function playPiano(f, when, dur, vol) {
   const g = ctx.createGain();
   g.connect(master);
   const harmonics = [[1, .9], [2, .35], [3, .15], [4, .08], [5, .04]];
@@ -408,11 +422,56 @@ function playTone(midi, when, dur = 0.9, vol = 0.45) {
   g.gain.linearRampToValueAtTime(vol, when + 0.012);
   g.gain.exponentialRampToValueAtTime(0.0008, when + dur);
 }
+// 小提琴：鋸齒波富泛音 + 低通柔化，弓壓式慢 attack + 持續，溫和抖音
+// vibrato 為對稱震盪，中心頻率仍是 f，聽寫判斷的音高不受影響
+function playViolin(f, when, dur, vol) {
+  const g = ctx.createGain();
+  g.connect(master);
+  const o = ctx.createOscillator();
+  o.type = 'sawtooth';
+  o.frequency.value = f;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = Math.min(f * 6, 8000);
+  lp.Q.value = 0.6;
+  o.connect(lp); lp.connect(g);
+  // vibrato：5.5Hz、振幅 f*0.004（約 ±7 cent，對稱不改變中心音高）
+  const lfo = ctx.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 5.5;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = f * 0.004;
+  lfo.connect(lfoGain); lfoGain.connect(o.frequency);
+  const a = Math.min(0.09, dur * 0.3);
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vol, when + a);
+  g.gain.exponentialRampToValueAtTime(0.0008, when + dur);
+  o.start(when); o.stop(when + dur + 0.05);
+  lfo.start(when); lfo.stop(when + dur + 0.05);
+}
+// 吉他：撥弦——鋸齒波 + 低通隨時間下掃（剛撥下亮、隨後高頻散失轉暗），極快 attack、指數衰減
+function playGuitar(f, when, dur, vol) {
+  const g = ctx.createGain();
+  g.connect(master);
+  const o = ctx.createOscillator();
+  o.type = 'sawtooth';
+  o.frequency.value = f;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 0.8;
+  lp.frequency.setValueAtTime(Math.min(f * 8, 9000), when);
+  lp.frequency.exponentialRampToValueAtTime(Math.max(f * 2, 600), when + Math.min(dur, 0.6));
+  o.connect(lp); lp.connect(g);
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vol, when + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0008, when + dur);
+  o.start(when); o.stop(when + dur + 0.1);
+}
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
 const lowSel = $('lowSel'), highSel = $('highSel'), countInput = $('countInput'),
-      speedSel = $('speedSel'), sharpsChk = $('sharpsChk'), refChk = $('refChk'),
+      speedSel = $('speedSel'), timbreSel = $('timbreSel'), sharpsChk = $('sharpsChk'), refChk = $('refChk'),
       btnSoundChk = $('btnSoundChk'), dirSel = $('dirSel'), keySel = $('keySel'),
       chordStyleSel = $('chordStyleSel'),
       playBtn = $('playBtn'), replayBtn = $('replayBtn'), undoBtn = $('undoBtn'),
