@@ -261,8 +261,10 @@
     <button class="primary" id="playBtn">▶ 播放題目</button>
     <button id="replayBtn" disabled>🔁 重播</button>
     <button id="undoBtn" disabled>⌫ 刪除一個</button>
+    <button id="submitBtn" disabled>✓ 送出答案</button>
     <button id="nextBtn" disabled>下一題 ➜</button>
   </div>
+  <div id="audioWarn" class="warn" style="display:none"></div>
   <div class="feedback" id="feedback"></div>
   <div class="slots" id="slots"></div>
   <div class="pad-toggle" data-modes="single" id="padToggle">
@@ -346,10 +348,12 @@ const CHORDS = [
 const CHORD_DEFAULT = ['大三', '小三'];
 
 // ---------- 音訊 ----------
-let ctx = null, master = null;
+let ctx = null, master = null, audioWarned = false;
 function ensureAudio() {
   if (!ctx) {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { showAudioWarn('這個瀏覽器不支援 Web Audio，請改用 Safari 或 Chrome 開啟。'); return; }
+    ctx = new AC();
     master = ctx.createGain();
     master.gain.value = 0.9;
     master.connect(ctx.destination);
@@ -360,7 +364,31 @@ function ensureAudio() {
     src.connect(ctx.destination);
     src.start(0);
   }
-  if (ctx.state === 'suspended') ctx.resume();
+  // resume() 是非同步的，回傳 promise 讓呼叫端可以等它真的解鎖再排程，避免吞掉第一個音
+  const p = (ctx.state === 'suspended') ? ctx.resume() : Promise.resolve();
+  return p.then(checkAudioHealth).catch(checkAudioHealth);
+}
+
+// 偵測常見的「沒聲音」情境並提示；解鎖成功就把提示收掉
+function isInAppBrowser() {
+  const ua = navigator.userAgent || '';
+  return /(FBAN|FBAV|Instagram|Line\/|LINE|MicroMessenger|; wv\)|Twitter)/i.test(ua);
+}
+function showAudioWarn(msg) {
+  const el = $('audioWarn');
+  if (!el) return;
+  el.textContent = '🔇 ' + msg;
+  el.style.display = '';
+}
+function hideAudioWarn() { const el = $('audioWarn'); if (el) el.style.display = 'none'; }
+function checkAudioHealth() {
+  if (ctx && ctx.state === 'running') { hideAudioWarn(); return; }
+  if (audioWarned) return;
+  audioWarned = true;
+  if (isInAppBrowser())
+    showAudioWarn('偵測到你用 App 內建瀏覽器開啟，可能無法發聲。請點右上角選單選「用 Safari／瀏覽器開啟」。');
+  else
+    showAudioWarn('播不出聲音嗎？請確認手機未開靜音（iPhone 看側邊靜音開關有沒有橘色）、媒體音量已開，再點一次播放。');
 }
 // 簡易鋼琴音色：基音 + 泛音，指數衰減
 function playTone(midi, when, dur = 0.9, vol = 0.45) {
@@ -389,7 +417,8 @@ const lowSel = $('lowSel'), highSel = $('highSel'), countInput = $('countInput')
       btnSoundChk = $('btnSoundChk'), dirSel = $('dirSel'), keySel = $('keySel'),
       chordStyleSel = $('chordStyleSel'),
       playBtn = $('playBtn'), replayBtn = $('replayBtn'), undoBtn = $('undoBtn'),
-      nextBtn = $('nextBtn'), slotsEl = $('slots'), padEl = $('pad'), feedbackEl = $('feedback');
+      submitBtn = $('submitBtn'), nextBtn = $('nextBtn'),
+      slotsEl = $('slots'), padEl = $('pad'), feedbackEl = $('feedback');
 
 // 最低/最高音選單：C2 ~ C7 的自然音
 (function fillRangeSelects() {
@@ -540,7 +569,7 @@ const MODES = {
         key: pitchName(m), label: pitchName(m), sub: solName(m),
         dark: isSharp(m), midi: m
       }));
-      return { seq, slots, pad };
+      return { seq, slots, pad, preview: opt => playTone(opt.midi, ctx.currentTime, 0.6) };
     }
   },
 
@@ -558,22 +587,31 @@ const MODES = {
       if (hi - lo < iv.s) return { error: '音域不夠寬，放不下「' + iv.name + '」，請拉開最低／最高音' };
       let dir = dirSel.value;
       if (dir === 'rand') dir = Math.random() < 0.5 ? 'up' : 'down';
+      const root = (dir === 'down') ? randInt(lo + iv.s, hi) : randInt(lo, hi - iv.s);
       const seq = [];
       if (dir === 'harm') {
-        const root = randInt(lo, hi - iv.s);
         seq.push({ midis: [root, root + iv.s], dur: 1.4, gap: gapBase() + 0.6, slot: 0 });
       } else if (dir === 'up') {
-        const root = randInt(lo, hi - iv.s);
         seq.push({ midis: [root], dur: 0.9, gap: gapBase(), slot: 0 });
         seq.push({ midis: [root + iv.s], dur: 0.9, gap: gapBase() });
       } else {
-        const root = randInt(lo + iv.s, hi);
         seq.push({ midis: [root], dur: 0.9, gap: gapBase(), slot: 0 });
         seq.push({ midis: [root - iv.s], dur: 0.9, gap: gapBase() });
       }
       const slots = [{ key: iv.name, label: iv.name, sub: iv.s + ' 半音' }];
-      const pad = opts.map(o => ({ key: o.name, label: o.name, sub: o.s + ' 半音' }));
-      return { seq, slots, pad };
+      const pad = opts.map(o => ({ key: o.name, label: o.name, sub: o.s + ' 半音', s: o.s }));
+      // 試聽：用同一個根音、同一個方向播該音程，方便對照
+      const preview = opt => {
+        const t = ctx.currentTime;
+        if (dir === 'harm') {
+          playTone(root, t, 1.2); playTone(root + opt.s, t, 1.2);
+        } else if (dir === 'up') {
+          playTone(root, t, 0.6); playTone(root + opt.s, t + 0.5, 0.7);
+        } else {
+          playTone(root, t, 0.6); playTone(root - opt.s, t + 0.5, 0.7);
+        }
+      };
+      return { seq, slots, pad, preview };
     }
   },
 
@@ -615,7 +653,10 @@ const MODES = {
         key: d.d + '（' + d.sol + '）', label: String(d.d), sub: d.sol,
         midi: tonic + d.off
       }));
-      return { seq, slots, pad, info: keyName + ' 大調' };
+      return {
+        seq, slots, pad, info: keyName + ' 大調',
+        preview: opt => playTone(opt.midi, ctx.currentTime, 0.7)
+      };
     }
   },
 
@@ -645,8 +686,14 @@ const MODES = {
         seq.push({ midis: ch.iv.map(o => root + o), dur: 1.3, gap: gapBase() + 0.5 });
       }
       const slots = [{ key: ch.short, label: ch.short, sub: ch.sub }];
-      const pad = opts.map(c => ({ key: c.short, label: c.short, sub: c.sub }));
-      return { seq, slots, pad };
+      const pad = opts.map(c => ({ key: c.short, label: c.short, sub: c.sub, iv: c.iv }));
+      // 試聽：用同一個根音、同一種播法彈該和弦，方便對照
+      const preview = opt => {
+        const t = ctx.currentTime;
+        if (style === 'block') opt.iv.forEach(o => playTone(root + o, t, 1.2));
+        else opt.iv.forEach((o, i) => playTone(root + o, t + i * 0.3, 0.6));
+      };
+      return { seq, slots, pad, preview };
     }
   }
 };
@@ -670,31 +717,36 @@ function newQuestion() {
 }
 
 function playQuestion() {
-  ensureAudio();
-  const resumePhase = (phase === 'checked') ? 'checked' : 'answering';
-  phase = 'playing';
-  updateButtons();
-  const token = ++playToken;
-  let t = ctx.currentTime + 0.12;
-  const marks = [];
-  for (const ev of currentQ.seq) {
-    for (const m of ev.midis) playTone(m, t, ev.dur);
-    if (ev.slot != null) marks.push({ i: ev.slot, at: (t - ctx.currentTime) * 1000, len: ev.gap * 800 });
-    t += ev.gap;
-  }
-  marks.forEach(({ i, at, len }) => setTimeout(() => {
-    if (token !== playToken) return;
-    const s = slotsEl.children[i];
-    if (s) { s.classList.add('playing'); setTimeout(() => s.classList.remove('playing'), len); }
-  }, at));
-  setTimeout(() => {
-    if (token !== playToken) return;
-    if (phase === 'playing') {
-      phase = resumePhase;
-      updateButtons();
-      if (phase === 'answering') renderSlots();
+  const run = () => {
+    if (!ctx) return;  // 音訊不可用（已顯示提示）
+    const resumePhase = (phase === 'checked') ? 'checked' : 'answering';
+    phase = 'playing';
+    updateButtons();
+    const token = ++playToken;
+    let t = ctx.currentTime + 0.12;
+    const marks = [];
+    for (const ev of currentQ.seq) {
+      for (const m of ev.midis) playTone(m, t, ev.dur);
+      if (ev.slot != null) marks.push({ i: ev.slot, at: (t - ctx.currentTime) * 1000, len: ev.gap * 800 });
+      t += ev.gap;
     }
-  }, (t - ctx.currentTime) * 1000);
+    marks.forEach(({ i, at, len }) => setTimeout(() => {
+      if (token !== playToken) return;
+      const s = slotsEl.children[i];
+      if (s) { s.classList.add('playing'); setTimeout(() => s.classList.remove('playing'), len); }
+    }, at));
+    setTimeout(() => {
+      if (token !== playToken) return;
+      if (phase === 'playing') {
+        phase = resumePhase;
+        updateButtons();
+        if (phase === 'answering') renderSlots();
+      }
+    }, (t - ctx.currentTime) * 1000);
+  };
+  // 等音訊真的解鎖（resume 完成）再排程，否則第一次播放會吞掉第一個音
+  const p = ensureAudio();
+  if (p && p.then) p.then(run); else run();
 }
 
 // ---------- 介面 ----------
@@ -773,17 +825,28 @@ function buildPianoPad() {
   padEl.appendChild(piano);
 }
 
+function flash(btn) {
+  btn.classList.add('flash');
+  setTimeout(() => btn.classList.remove('flash'), 180);
+}
+
 function answerOpt(opt, btn) {
+  // 對完答案後變成試聽模式：按任何鍵都發聲，不影響紀錄
+  if (phase === 'checked') {
+    ensureAudio();
+    if (currentQ.preview) currentQ.preview(opt);
+    flash(btn);
+    return;
+  }
   if (phase !== 'answering') return;
+  if (answers.length >= currentQ.slots.length) return; // 填滿後請按「送出答案」或刪除重選
   if (btnSoundChk.checked && opt.midi != null) {
     ensureAudio();
     playTone(opt.midi, ctx.currentTime, 0.5);
   }
-  btn.classList.add('flash');
-  setTimeout(() => btn.classList.remove('flash'), 180);
+  flash(btn);
   answers.push(opt);
   renderSlots();
-  if (answers.length === currentQ.slots.length) check();
   updateButtons();
 }
 
@@ -817,7 +880,7 @@ function check() {
     feedbackEl.className = 'feedback good';
   } else {
     feedbackEl.textContent = '答對 ' + right + ' / ' + currentQ.slots.length +
-      keyInfo + '，可以按「重播」再聽一次對照';
+      keyInfo + '，按「重播」聽題目，或點下面的鍵試聽比較';
     feedbackEl.className = 'feedback bad';
   }
   renderStats();
@@ -835,9 +898,11 @@ function updateButtons() {
   playBtn.disabled = (phase === 'playing');
   replayBtn.disabled = (phase === 'idle' || phase === 'playing' || !currentQ);
   undoBtn.disabled = !(phase === 'answering' && answers.length > 0);
+  submitBtn.disabled = !(phase === 'answering' && currentQ && answers.length === currentQ.slots.length);
   nextBtn.disabled = (phase !== 'checked');
+  // 作答中可按；對完答案後保持可按（試聽模式）
   padEl.querySelectorAll('button').forEach(b =>
-    b.disabled = (phase !== 'answering') || !!b.dataset.locked);
+    b.disabled = !(phase === 'answering' || phase === 'checked') || !!b.dataset.locked);
 }
 
 // ---------- 統計 ----------
@@ -944,6 +1009,9 @@ playBtn.addEventListener('click', () => {
 });
 replayBtn.addEventListener('click', () => { ensureAudio(); playQuestion(); });
 undoBtn.addEventListener('click', undo);
+submitBtn.addEventListener('click', () => {
+  if (phase === 'answering' && currentQ && answers.length === currentQ.slots.length) check();
+});
 nextBtn.addEventListener('click', () => {
   if (!newQuestion()) return;
   playQuestion();
