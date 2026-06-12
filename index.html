@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>聽寫練習</title>
+<script src="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
 <style>
   :root {
     --bg: #f4f6fb;
@@ -396,13 +397,67 @@ function checkAudioHealth() {
   else
     showAudioWarn('播不出聲音嗎？請確認手機未開靜音（iPhone 看側邊靜音開關有沒有橘色）、媒體音量已開，再點一次播放。');
 }
+
+// ---------- 真實樂器採樣（SoundFont）----------
+// 每種音色對應 MusyngKite 採樣庫的樂器名；選到才下載，載入後快取，失敗則退回純合成
+const SF_BASE = 'https://gleitz.github.io/midi-js-soundfonts/';
+const SF_NAMES = {
+  piano:  'acoustic_grand_piano',
+  violin: 'violin',
+  guitar: 'acoustic_guitar_steel'
+};
+const sfCache = {};   // { timbre: { ready:bool, loading:bool, failed:bool, player } }
+let sfLoadSeq = 0;
+
+function loadSoundfont(timbre) {
+  const name = SF_NAMES[timbre];
+  if (!name) return Promise.resolve(null);
+  const c = sfCache[timbre];
+  if (c && (c.ready || c.loading)) return c.promise || Promise.resolve(c.player);
+  if (typeof Soundfont === 'undefined' || !ctx) return Promise.resolve(null); // 函式庫沒載到或音訊未解鎖
+  const entry = { ready: false, loading: true, failed: false, player: null };
+  sfCache[timbre] = entry;
+  const seq = ++sfLoadSeq;
+  showSfLoading(timbre);
+  entry.promise = Soundfont.instrument(ctx, name, {
+    soundfont: 'MusyngKite', format: 'mp3', destination: master
+  }).then(player => {
+    entry.player = player; entry.ready = true; entry.loading = false;
+    if (timbreSel && timbreSel.value === timbre) hideSfLoading();
+    return player;
+  }).catch(err => {
+    entry.loading = false; entry.failed = true;
+    if (timbreSel && timbreSel.value === timbre) showSfFailed(timbre);
+    return null;  // 退回純合成
+  });
+  return entry.promise;
+}
+
+function showSfLoading(timbre) {
+  const label = timbre === 'violin' ? '小提琴' : timbre === 'guitar' ? '木吉他' : '鋼琴';
+  showAudioWarn('正在下載「' + label + '」真實音色（約 2~3MB，僅首次需要）…');
+}
+function showSfFailed(timbre) {
+  const label = timbre === 'violin' ? '小提琴' : timbre === 'guitar' ? '木吉他' : '鋼琴';
+  showAudioWarn('「' + label + '」真實音色載入失敗（可能網路不穩），已暫時改用合成音色。');
+}
+function hideSfLoading() { hideAudioWarn(); }
+
 // 三種音色都以 freqOf(midi) 為精確基音，只改泛音結構與包絡，確保聽寫音準不跑掉
+// 若該音色的真實採樣（SoundFont）已載入，優先用真錄音播放；否則退回純合成（保證永遠有聲）
 function playTone(midi, when, dur = 0.9, vol = 0.45) {
-  const f = freqOf(midi);
   const tb = timbreSel ? timbreSel.value : 'piano';
+  const inst = sfCache[tb];
+  if (inst && inst.ready) return playSampled(inst.player, midi, when, dur, vol);
+  const f = freqOf(midi);
   if (tb === 'violin') return playViolin(f, when, dur, vol);
   if (tb === 'guitar') return playGuitar(f, when, dur, vol);
   return playPiano(f, when, dur, vol);
+}
+// 用真實樂器採樣播放：soundfont-player 內部按 MIDI 音高選對應錄音，音準等同錄音本身
+function playSampled(player, midi, when, dur, vol) {
+  // MusyngKite 是逐半音採樣，midi→音名直接對應，不需 pitch-shift
+  player.play(midi, when, { duration: dur + 0.3, gain: vol * 2.2 });
 }
 // 鋼琴：基音 + 泛音，快速 attack、指數衰減
 function playPiano(f, when, dur, vol) {
@@ -803,8 +858,17 @@ function playQuestion() {
     }, (t - ctx.currentTime) * 1000);
   };
   // 等音訊真的解鎖（resume 完成）再排程，否則第一次播放會吞掉第一個音
+  // 解鎖後先確保當前音色的真實採樣已載入（載入中／失敗都會 resolve，失敗時 playTone 自動退回合成）
   const p = ensureAudio();
-  if (p && p.then) p.then(run); else run();
+  const afterAudio = () => {
+    if (!ctx) return;
+    const tb = timbreSel ? timbreSel.value : 'piano';
+    const inst = sfCache[tb];
+    if (inst && inst.ready) { run(); return; }            // 採樣已就緒，直接播
+    const lp = loadSoundfont(tb);
+    if (lp && lp.then) lp.then(run); else run();           // 載完（或退回合成）再播
+  };
+  if (p && p.then) p.then(afterAudio); else afterAudio();
 }
 
 // ---------- 介面 ----------
@@ -1126,6 +1190,15 @@ $('importFile').addEventListener('change', e => {
     e.target.value = '';
   };
   reader.readAsText(f);
+});
+
+// 切換音色時提前預載採樣（需 AudioContext，故僅在已解鎖後預載；未解鎖時等按播放再載）
+timbreSel.addEventListener('change', () => {
+  hideAudioWarn();
+  const tb = timbreSel.value;
+  const inst = sfCache[tb];
+  if (inst && inst.ready) { hideAudioWarn(); return; }
+  if (ctx) loadSoundfont(tb);   // 已解鎖：立即背景下載
 });
 
 if (!storageOk) $('storageWarn').style.display = '';
