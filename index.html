@@ -754,7 +754,6 @@ function buildPianoPad() {
     wrap.className = 'wkey-wrap';
     const w = document.createElement('button');
     w.className = 'wkey';
-    w.innerHTML = pitchName(m) + '<small>' + solName(m) + '</small>';
     const wopt = byMidi.get(m);
     if (wopt) w.addEventListener('click', () => answerOpt(wopt, w));
     else w.dataset.locked = '1';
@@ -762,7 +761,6 @@ function buildPianoPad() {
     if (m + 1 <= hi && isSharp(m + 1)) {
       const b = document.createElement('button');
       b.className = 'bkey';
-      b.textContent = NAMES[(m + 1) % 12];
       const bopt = byMidi.get(m + 1);
       if (bopt) b.addEventListener('click', () => answerOpt(bopt, b));
       else b.dataset.locked = '1';
