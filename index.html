@@ -213,6 +213,16 @@
     background: #2a2f3a; color: #cdd3dd; border: 1px solid #3a4150; cursor: pointer;
   }
   .diag-actions button:hover { background: #333a47; }
+  .diag-test {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 10px; font-size: 12px; color: #9aa3b2;
+    background: #181c23; border-bottom: 1px solid #2a2f3a;
+  }
+  .diag-test button {
+    font-size: 13px; padding: 6px 12px; border-radius: 8px;
+    background: #2f3a4d; color: #dbe3f0; border: 1px solid #45506680; cursor: pointer;
+  }
+  .diag-test button:active { background: #3a4862; }
   .diag-log {
     margin: 0; padding: 10px; max-height: 280px; overflow: auto;
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
@@ -313,6 +323,11 @@
           <button type="button" id="diagClear">🗑 清空</button>
           <button type="button" id="diagClose">✕</button>
         </span>
+      </div>
+      <div class="diag-test">
+        <span>🧪 無聲時依序點這兩顆，聽哪一顆「有聲」：</span>
+        <button type="button" id="diagBeepHtml5">🔊 HTML5 嗶聲</button>
+        <button type="button" id="diagBeepWebAudio">🎵 WebAudio 嗶聲</button>
       </div>
       <pre id="diagLog" class="diag-log"></pre>
     </div>
@@ -1419,6 +1434,58 @@ document.getElementById('diagDownload').addEventListener('click', () => {
 document.getElementById('diagClear').addEventListener('click', () => {
   try { localStorage.removeItem(ALOG_KEY); } catch {}
   renderDiag();
+});
+
+// ---------- 受控測試音：把「無聲」切到精確的層級 ----------
+// 兩條路徑刻意獨立，對照哪一顆有聲就能斷案：
+//   HTML5 <audio>：完全不碰 AudioContext，走的是另一條輸出管線
+//   WebAudio：用現有的 ctx，但繞過 master/playTone/採樣，直連 destination，最純粹的 Web Audio 輸出測試
+// 內嵌一段約 0.25 秒 440Hz 的 WAV（data URI，不依賴網路、離線也能播）
+const BEEP_WAV = (() => {
+  const sr = 8000, len = Math.floor(sr * 0.25), bytes = 44 + len * 2;
+  const b = new Uint8Array(bytes), dv = new DataView(b.buffer);
+  const wr = (o, s) => { for (let i = 0; i < s.length; i++) b[o + i] = s.charCodeAt(i); };
+  wr(0, 'RIFF'); dv.setUint32(4, bytes - 8, true); wr(8, 'WAVE'); wr(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wr(36, 'data'); dv.setUint32(40, len * 2, true);
+  for (let i = 0; i < len; i++) {
+    const env = Math.min(1, i / 200, (len - i) / 200);   // 頭尾淡入淡出，避免爆音
+    dv.setInt16(44 + i * 2, Math.sin(2 * Math.PI * 440 * i / sr) * 22000 * env, true);
+  }
+  let bin = ''; for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  return 'data:audio/wav;base64,' + btoa(bin);
+})();
+document.getElementById('diagBeepHtml5').addEventListener('click', () => {
+  alog('test-html5', '嘗試播放 HTML5 <audio> 嗶聲');
+  try {
+    const a = new Audio(BEEP_WAV);
+    a.onplaying = () => alog('test-html5-playing', '✅ HTML5 已開始播放（這條管線活著）');
+    a.onerror = () => alog('test-html5-error', '❌ HTML5 播放失敗 err=' + (a.error && a.error.code));
+    const pr = a.play();
+    if (pr && pr.then) pr.then(() => alog('test-html5-resolved', 'play() resolved'),
+                               e => alog('test-html5-reject', '❌ play() 被拒：' + String(e)));
+  } catch (e) { alog('test-html5-throw', String(e)); }
+});
+document.getElementById('diagBeepWebAudio').addEventListener('click', () => {
+  const p = ensureAudio();   // 確保 ctx 起來（會自己記 ctx-create/resume 等）
+  const fire = () => {
+    if (!ctx) { alog('test-webaudio', '❌ 無 ctx'); return; }
+    alog('test-webaudio', '嘗試直連 destination 發聲 state=' + ctx.state + ' time=' + ctx.currentTime.toFixed(2));
+    try {
+      const osc = ctx.createOscillator(), g = ctx.createGain();
+      osc.frequency.value = 440;
+      g.gain.value = 0.0001;
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+      osc.connect(g); g.connect(ctx.destination);   // 刻意繞過 master / playTone / 採樣
+      osc.start(); osc.stop(ctx.currentTime + 0.26);
+      const t0 = ctx.currentTime;
+      osc.onended = () => alog('test-webaudio-ended', 'osc 已結束，currentTime 前進 ' + (ctx.currentTime - t0).toFixed(3) + 's');
+    } catch (e) { alog('test-webaudio-throw', String(e)); }
+  };
+  if (p && p.then) p.then(fire, fire); else fire();
 });
 
 // ---------- 頁面生命週期監聽（追「切走再回來就沒聲」的關鍵時刻）----------
