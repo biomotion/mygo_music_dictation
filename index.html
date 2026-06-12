@@ -240,30 +240,30 @@
 <div class="tabs" id="tabs">
   <button class="tab active" data-mode="single">單音聽寫</button>
   <button class="tab" data-mode="interval">音程辨認</button>
-  <button class="tab" data-mode="degree">調內音級</button>
+  <button class="tab" data-mode="scale">音階辨認</button>
   <button class="tab" data-mode="chord">和弦辨認</button>
 </div>
 
 <div class="card">
   <h2>題目設定</h2>
   <div class="settings-grid">
-    <label class="setting" data-modes="single interval chord">最低音
+    <label class="setting" data-modes="single interval chord" id="lowLab">最低音
       <select id="lowSel"></select>
     </label>
-    <label class="setting" data-modes="single interval chord">最高音
+    <label class="setting" data-modes="single interval chord" id="highLab">最高音
       <select id="highSel"></select>
     </label>
-    <label class="setting" data-modes="single degree">每題音數
+    <label class="setting" data-modes="single">每題音數
       <input type="number" id="countInput" min="1" max="10" value="3">
     </label>
-    <label class="setting" data-modes="single interval degree chord">速度
+    <label class="setting" data-modes="single interval scale chord">速度
       <select id="speedSel">
         <option value="1.2">慢</option>
         <option value="0.85" selected>中</option>
         <option value="0.55">快</option>
       </select>
     </label>
-    <label class="setting" data-modes="single interval degree chord">音色
+    <label class="setting" data-modes="single interval scale chord">音色
       <select id="timbreSel">
         <option value="piano" selected>鋼琴</option>
         <option value="violin">小提琴</option>
@@ -282,9 +282,24 @@
         <option value="harm">和聲（同時）</option>
       </select>
     </label>
-    <label class="setting" data-modes="degree">調性
-      <select id="keySel"></select>
+    <label class="setting" data-modes="scale">播法
+      <select id="scaleDirSel">
+        <option value="up" selected>只上行</option>
+        <option value="updown">上行＋下行</option>
+      </select>
     </label>
+    <label class="setting" data-modes="chord">題目
+      <select id="chordGoalSel">
+        <option value="quality" selected>辨認性質</option>
+        <option value="name">辨認和弦名稱</option>
+      </select>
+    </label>
+    <label class="setting" data-modes="chord">
+      <input type="checkbox" id="invChk"> 包含轉位（更難）</label>
+    <label class="setting" data-modes="chord" id="rootSharpsLab">
+      <input type="checkbox" id="rootSharpsChk"> 根音含黑鍵</label>
+    <label class="setting" data-modes="chord" id="chordRefLab">
+      <input type="checkbox" id="chordRefChk"> 先播參考音（中央 C）</label>
     <label class="setting" data-modes="chord">播放方式
       <select id="chordStyleSel">
         <option value="block" selected>同時</option>
@@ -292,14 +307,14 @@
         <option value="rand">兩者隨機</option>
       </select>
     </label>
-    <label class="setting" data-modes="single degree">
+    <label class="setting" data-modes="single">
       <input type="checkbox" id="btnSoundChk"> 按答案鈕時發聲</label>
   </div>
   <div class="group-label" data-modes="interval">要練的音程</div>
   <div class="chk-grid" id="ivChks" data-modes="interval"></div>
-  <div class="group-label" data-modes="degree">要練的音級</div>
-  <div class="chk-grid" id="degChks" data-modes="degree"></div>
-  <div class="group-label" data-modes="chord">要練的和弦</div>
+  <div class="group-label" data-modes="scale">要練的音階</div>
+  <div class="chk-grid" id="scaleChks" data-modes="scale"></div>
+  <div class="group-label" data-modes="chord" id="chordChkLabel">要練的和弦</div>
   <div class="chk-grid" id="chordChks" data-modes="chord"></div>
   <div class="hint" id="hintEl"></div>
 </div>
@@ -392,27 +407,42 @@ const INTERVALS = [
 ];
 const IV_DEFAULT = ['大二度', '大三度', '完全四度', '完全五度', '完全八度'];
 
-const DEGREES = [
-  { d: 1, off: 0,  sol: 'Do' }, { d: 2, off: 2,  sol: 'Re' },
-  { d: 3, off: 4,  sol: 'Mi' }, { d: 4, off: 5,  sol: 'Fa' },
-  { d: 5, off: 7,  sol: 'Sol' }, { d: 6, off: 9,  sol: 'La' },
-  { d: 7, off: 11, sol: 'Si' }
+// 音階：steps 為上行的半音偏移（含高八度主音）；旋律小調下行依慣例改用自然小調（descSteps）
+const SCALES = [
+  { name: '大調',       steps: [0, 2, 4, 5, 7, 9, 11, 12] },
+  { name: '自然小調',   steps: [0, 2, 3, 5, 7, 8, 10, 12] },
+  { name: '和聲小調',   steps: [0, 2, 3, 5, 7, 8, 11, 12] },
+  { name: '旋律小調',   steps: [0, 2, 3, 5, 7, 9, 11, 12], descSteps: [12, 10, 8, 7, 5, 3, 2, 0] },
+  { name: '大調五聲',   steps: [0, 2, 4, 7, 9, 12] },
+  { name: '小調五聲',   steps: [0, 3, 5, 7, 10, 12] },
+  { name: 'Dorian',     steps: [0, 2, 3, 5, 7, 9, 10, 12] },
+  { name: 'Phrygian',   steps: [0, 1, 3, 5, 7, 8, 10, 12] },
+  { name: 'Lydian',     steps: [0, 2, 4, 6, 7, 9, 11, 12] },
+  { name: 'Mixolydian', steps: [0, 2, 4, 5, 7, 9, 10, 12] },
+  { name: '藍調音階',   steps: [0, 3, 5, 6, 7, 10, 12] }
 ];
-const KEYS = [
-  ['C', 0], ['G', 7], ['D', 2], ['A', 9], ['E', 4],
-  ['B', 11], ['F', 5], ['B♭', 10], ['E♭', 3], ['A♭', 8]
-];
+const SCALE_DEFAULT = SCALES.map(s => s.name);
 
+// sym 為標準和弦代號的性質後綴（接在根音後，如 C、Cm、C7、Cmaj7）
 const CHORDS = [
-  { short: '大三', name: '大三和弦', sub: 'M',    iv: [0, 4, 7] },
-  { short: '小三', name: '小三和弦', sub: 'm',    iv: [0, 3, 7] },
-  { short: '減三', name: '減三和弦', sub: 'dim',  iv: [0, 3, 6] },
-  { short: '增三', name: '增三和弦', sub: 'aug',  iv: [0, 4, 8] },
-  { short: '屬七', name: '屬七和弦', sub: '7',    iv: [0, 4, 7, 10] },
-  { short: '大七', name: '大七和弦', sub: 'maj7', iv: [0, 4, 7, 11] },
-  { short: '小七', name: '小七和弦', sub: 'm7',   iv: [0, 3, 7, 10] }
+  { short: '大三', name: '大三和弦', sub: 'M',    sym: '',     iv: [0, 4, 7] },
+  { short: '小三', name: '小三和弦', sub: 'm',    sym: 'm',    iv: [0, 3, 7] },
+  { short: '減三', name: '減三和弦', sub: 'dim',  sym: 'dim',  iv: [0, 3, 6] },
+  { short: '屬七', name: '屬七和弦', sub: '7',    sym: '7',    iv: [0, 4, 7, 10] },
+  { short: '大七', name: '大七和弦', sub: 'maj7', sym: 'maj7', iv: [0, 4, 7, 11] },
+  { short: '小七', name: '小七和弦', sub: 'm7',   sym: 'm7',   iv: [0, 3, 7, 10] }
 ];
 const CHORD_DEFAULT = ['大三', '小三'];
+const INV_NAMES = ['原位', '第一轉位', '第二轉位', '第三轉位'];
+// 第 k 轉位（close position）：把前 k 個音翻高八度後以最低音歸零；
+// 三和弦一律再疊一個高八度的最低音（如原位 C-E-G-C、第一轉位 E-G-C-E），
+// 與七和弦同為四音，避免「音數」洩漏是否轉位。
+function chordVoicing(iv, k) {
+  const rot = iv.slice(k).concat(iv.slice(0, k).map(o => o + 12));
+  const base = rot[0];
+  const v = rot.map(o => o - base);
+  return iv.length === 3 ? [...v, 12] : v;
+}
 
 // ---------- 音訊診斷紀錄 ----------
 // 目的：追查「掛機久了／切頁面回來無聲，連 refresh 都救不回、只能關分頁重開」的根因。
@@ -691,8 +721,9 @@ function playGuitar(f, when, dur, vol) {
 const $ = id => document.getElementById(id);
 const lowSel = $('lowSel'), highSel = $('highSel'), countInput = $('countInput'),
       speedSel = $('speedSel'), timbreSel = $('timbreSel'), sharpsChk = $('sharpsChk'), refChk = $('refChk'),
-      btnSoundChk = $('btnSoundChk'), dirSel = $('dirSel'), keySel = $('keySel'),
-      chordStyleSel = $('chordStyleSel'),
+      btnSoundChk = $('btnSoundChk'), dirSel = $('dirSel'), scaleDirSel = $('scaleDirSel'),
+      chordStyleSel = $('chordStyleSel'), invChk = $('invChk'),
+      chordGoalSel = $('chordGoalSel'), rootSharpsChk = $('rootSharpsChk'), chordRefChk = $('chordRefChk'),
       playBtn = $('playBtn'), replayBtn = $('replayBtn'), undoBtn = $('undoBtn'),
       submitBtn = $('submitBtn'),
       slotsEl = $('slots'), padEl = $('pad'), feedbackEl = $('feedback');
@@ -712,20 +743,6 @@ const lowSel = $('lowSel'), highSel = $('highSel'), countInput = $('countInput')
   highSel.value = 72;  // C5
 })();
 
-// 調性選單
-(function fillKeySel() {
-  for (const [name] of KEYS) {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name + ' 大調';
-    keySel.appendChild(opt);
-  }
-  const r = document.createElement('option');
-  r.value = 'random';
-  r.textContent = '隨機調性';
-  keySel.appendChild(r);
-})();
-
 // 勾選群組
 function buildChkGroup(container, items, getLabel, getId, defaults) {
   for (const it of items) {
@@ -741,7 +758,7 @@ function buildChkGroup(container, items, getLabel, getId, defaults) {
   }
 }
 buildChkGroup($('ivChks'), INTERVALS, iv => iv.name, iv => iv.name, IV_DEFAULT);
-buildChkGroup($('degChks'), DEGREES, d => d.d + '（' + d.sol + '）', d => String(d.d), ['1','2','3','4','5','6','7']);
+buildChkGroup($('scaleChks'), SCALES, s => s.name, s => s.name, SCALE_DEFAULT);
 buildChkGroup($('chordChks'), CHORDS, c => c.name, c => c.short, CHORD_DEFAULT);
 const checkedOf = container => [...container.querySelectorAll('input:checked')].map(c => c.value);
 
@@ -751,8 +768,9 @@ let padMode = (() => {
   try { return localStorage.getItem('dictationPadMode') || 'buttons'; }
   catch { return 'buttons'; }
 })();
-let currentQ = null;     // {seq, slots, pad, info?}
+let currentQ = null;     // {seq, slots, pad, info?, twoStage?}
 let answers = [];        // 已選的 pad 選項
+let pendingRoot = null;  // 兩段式作答（和弦名稱）：已按根音、待按性質
 let phase = 'idle';      // idle | playing | answering | checked
 let playToken = 0;
 let session = { correct: 0, total: 0, streak: 0 };
@@ -776,14 +794,19 @@ function loadStore() {
       if (old) s = { modes: { single: { notes: old, confusions: {} } } };
     }
   } catch {}
-  for (const m of ['single', 'interval', 'degree', 'chord'])
+  for (const m of ['single', 'interval', 'scale', 'chord', 'chordName'])
     if (!s.modes[m]) s.modes[m] = emptyBucket();
   return s;
 }
 function saveStore() {
   try { localStorage.setItem('dictationStore', JSON.stringify(store)); } catch {}
 }
-function curBucket() { return store.modes[curMode]; }
+// 和弦分頁的兩種題目（性質／名稱）各記一桶，統計與弱點分析不互相混雜
+function curBucket() {
+  const key = (curMode === 'chord' && chordGoalSel.value === 'name') ? 'chordName' : curMode;
+  if (!store.modes[key]) store.modes[key] = emptyBucket();
+  return store.modes[key];
+}
 function mergeStore(inc) {
   const incModes = inc.modes ? inc.modes : (inc.notes ? { single: inc } : {});
   for (const [mode, b] of Object.entries(incModes)) {
@@ -892,85 +915,149 @@ const MODES = {
     }
   },
 
-  degree: {
-    statHead: '音級',
-    hint: '先聽 I–IV–V–I 和弦進行建立調性，再判斷後面的音是調內第幾級。',
+  scale: {
+    statHead: '音階',
+    hint: '從隨機主音播一條音階，判斷它是哪種音階。「上行＋下行」時旋律小調的下行會照慣例改用自然小調。',
     statDisplay: k => '<b>' + k + '</b>',
-    orderIndex: k => parseInt(k, 10) || 0,
+    orderIndex: k => SCALES.findIndex(s => s.name === k),
     build() {
-      const ids = checkedOf($('degChks'));
-      const opts = DEGREES.filter(d => ids.includes(String(d.d)));
-      if (opts.length < 2) return { error: '至少勾選兩個音級才有得猜' };
-      const [keyName, pc] = keySel.value === 'random' ? pickFrom(KEYS)
-        : KEYS.find(k => k[0] === keySel.value);
-      const tonic = 57 + ((pc + 3) % 12);  // 主音落在 A3~G#4 之間
-      const seq = [];
-      // I–IV–V–I 終止式
-      const cad = [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7, 12]];
-      for (let i = 0; i < cad.length; i++) {
-        seq.push({
-          midis: cad[i].map(o => tonic + o),
-          dur: 0.75,
-          gap: i === cad.length - 1 ? 1.1 : 0.78
-        });
+      const names = checkedOf($('scaleChks'));
+      const opts = SCALES.filter(s => names.includes(s.name));
+      if (opts.length < 2) return { error: '至少勾選兩種音階才有得猜' };
+      const sc = pickFrom(opts);
+      const root = randInt(48, 67);            // 主音 C3～G4，舒服的音域
+      const gap = gapBase() * 0.55;            // 音階跑動比聽寫單音快
+      const ascend = sc.steps.map(st => root + st);
+      let notes = ascend;
+      if (scaleDirSel.value === 'updown') {
+        // 下行：旋律小調用 descSteps（自然小調），其他直接反轉；slice(1) 避免最高音重複
+        const desc = (sc.descSteps || [...sc.steps].reverse()).slice(1).map(st => root + st);
+        notes = ascend.concat(desc);
       }
-      const n = clampCount();
-      const slots = [];
-      let prev = null;
-      for (let i = 0; i < n; i++) {
-        let dg;
-        do { dg = pickFrom(opts); }
-        while (n > 1 && prev && dg.d === prev.d && opts.length > 2 && Math.random() < 0.6);
-        prev = dg;
-        const key = dg.d + '（' + dg.sol + '）';
-        slots.push({ key, label: String(dg.d), sub: dg.sol });
-        seq.push({ midis: [tonic + dg.off], dur: 0.9, gap: gapBase(), slot: i });
-      }
-      const pad = opts.map(d => ({
-        key: d.d + '（' + d.sol + '）', label: String(d.d), sub: d.sol,
-        midi: tonic + d.off
+      const seq = notes.map((m, i) => ({
+        midis: [m],
+        dur: i === notes.length - 1 ? 1.0 : 0.55,
+        gap: i === notes.length - 1 ? gapBase() + 0.5 : gap,
+        slot: i === 0 ? 0 : undefined
       }));
-      return {
-        seq, slots, pad, info: keyName + ' 大調',
-        preview: opt => playTone(opt.midi, ctx.currentTime, 0.7)
+      const slots = [{ key: sc.name, label: sc.name, sub: '' }];
+      const pad = opts.map(s => ({ key: s.name, label: s.name, sub: '', scale: s }));
+      // 試聽：用同一個主音上行播該音階，方便對照
+      const preview = opt => {
+        const t = ctx.currentTime;
+        opt.scale.steps.forEach((st, i) =>
+          playTone(root + st, t + i * 0.28, 0.3, 0.45, 0.28));
       };
+      return { seq, slots, pad, preview, info: '主音 ' + pitchName(root) };
     }
   },
 
   chord: {
-    statHead: '和弦',
-    hint: '建議先從大三、小三和弦開始，分辨明亮與柔暗的色彩，再慢慢加入其他和弦。',
-    statDisplay: k => { const c = CHORDS.find(c => c.short === k); return '<b>' + (c ? c.name : k) + '</b>'; },
-    orderIndex: k => CHORDS.findIndex(c => c.short === k),
+    get statHead() { return chordGoalSel.value === 'name' ? '和弦名' : '和弦'; },
+    get hint() {
+      return chordGoalSel.value === 'name'
+        ? '聽和弦答出完整名稱：先按根音、再按性質組成答案（如 C → m7 = Cm7）。沒有絕對音感建議勾「先播參考音」。'
+        : '建議先從大三、小三和弦開始。三和弦會多疊一個高八度的最低音；勾「包含轉位」後和弦會隨機以轉位彈出（七和弦最多到第三轉位），答完會顯示是第幾轉位。';
+    },
+    statDisplay(k) {
+      if (chordGoalSel.value === 'name') return '<b>' + k + '</b>';
+      const c = CHORDS.find(c => c.short === k);
+      return '<b>' + (c ? c.name : k) + '</b>';
+    },
+    orderIndex(k) {
+      const m = k.match(/^([A-G]#?)(.*)$/);
+      if (m && chordGoalSel.value === 'name')
+        return NAMES.indexOf(m[1]) * 10 + CHORDS.findIndex(c => c.sym === m[2]);
+      return CHORDS.findIndex(c => c.short === k);
+    },
     build() {
+      return chordGoalSel.value === 'name' ? this.buildName() : this.buildQuality();
+    },
+    resolveStyle() {
+      let style = chordStyleSel.value;
+      if (style === 'rand') style = Math.random() < 0.5 ? 'block' : 'arp';
+      return style;
+    },
+    pushChordSeq(seq, midis, style) {
+      if (style === 'block') {
+        seq.push({ midis, dur: 1.5, gap: gapBase() + 0.7, slot: 0 });
+      } else {
+        midis.forEach((m, i) => seq.push({
+          midis: [m], dur: 0.7, gap: 0.38, slot: i === 0 ? 0 : undefined
+        }));
+        seq.push({ midis, dur: 1.3, gap: gapBase() + 0.5 });
+      }
+    },
+    buildQuality() {
       const shorts = checkedOf($('chordChks'));
       const opts = CHORDS.filter(c => shorts.includes(c.short));
       if (opts.length < 2) return { error: '至少勾選兩種和弦才有得猜' };
       const [lo, hi] = rangeBounds();
       const ch = pickFrom(opts);
-      const span = ch.iv[ch.iv.length - 1];
+      const inv = invChk.checked ? randInt(0, ch.iv.length - 1) : 0;  // 三和弦到第二轉位、七和弦到第三轉位
+      const voice = chordVoicing(ch.iv, inv);
+      const span = voice[voice.length - 1];
       if (hi - lo < span) return { error: '音域不夠寬，放不下「' + ch.name + '」，請拉開最低／最高音' };
-      const root = randInt(lo, hi - span);
-      let style = chordStyleSel.value;
-      if (style === 'rand') style = Math.random() < 0.5 ? 'block' : 'arp';
+      const bass = randInt(lo, hi - span);
+      const style = this.resolveStyle();
       const seq = [];
-      if (style === 'block') {
-        seq.push({ midis: ch.iv.map(o => root + o), dur: 1.5, gap: gapBase() + 0.7, slot: 0 });
-      } else {
-        ch.iv.forEach((o, i) => seq.push({
-          midis: [root + o], dur: 0.7, gap: 0.38, slot: i === 0 ? 0 : undefined
-        }));
-        seq.push({ midis: ch.iv.map(o => root + o), dur: 1.3, gap: gapBase() + 0.5 });
-      }
+      this.pushChordSeq(seq, voice.map(o => bass + o), style);
       const slots = [{ key: ch.short, label: ch.short, sub: ch.sub }];
       const pad = opts.map(c => ({ key: c.short, label: c.short, sub: c.sub, iv: c.iv }));
-      // 試聽：用同一個根音、同一種播法彈該和弦，方便對照
+      // 試聽：同一個最低音、同一種播法與轉位（三和弦無第三轉位時取餘數），只換性質方便對照
       const preview = opt => {
         const t = ctx.currentTime;
-        if (style === 'block') opt.iv.forEach(o => playTone(root + o, t, 1.2));
-        else opt.iv.forEach((o, i) => playTone(root + o, t + i * 0.3, 0.6));
+        const v = chordVoicing(opt.iv, inv % opt.iv.length);
+        if (style === 'block') v.forEach(o => playTone(bass + o, t, 1.2));
+        else v.forEach((o, i) => playTone(bass + o, t + i * 0.3, 0.6));
       };
-      return { seq, slots, pad, preview };
+      // 答完顯示「○○和弦・第幾轉位」
+      const info = invChk.checked ? ch.name + '・' + INV_NAMES[inv] : null;
+      return { seq, slots, pad, preview, info };
+    },
+    // 辨認和弦名稱：答案 = 根音 + 性質（如 Cm7），兩段式作答；轉位時仍以原位名稱作答
+    buildName() {
+      const shorts = checkedOf($('chordChks'));
+      const opts = CHORDS.filter(c => shorts.includes(c.short));
+      if (!opts.length) return { error: '至少勾選一種和弦' };
+      // 名稱題不用「最低／最高音」設定：固定 C3–E5 的舒適音域，任何根音、任何轉位都放得下
+      const lo = 48, hi = 76;
+      const pcs = rootSharpsChk.checked
+        ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        : [0, 2, 4, 5, 7, 9, 11];
+      const ch = pickFrom(opts);
+      const rootPc = pickFrom(pcs);
+      const inv = invChk.checked ? randInt(0, ch.iv.length - 1) : 0;
+      // 相對「根音」的 voicing：旋轉到第 inv 轉位，三和弦再疊一個高八度最低音
+      let rel = ch.iv.slice(inv).concat(ch.iv.slice(0, inv).map(o => o + 12));
+      if (ch.iv.length === 3) rel = [...rel, rel[0] + 12];
+      // 在音域內找出所有可放下這個 voicing 的根音八度
+      const candidates = [];
+      for (let m = lo - 12; m <= hi; m++)
+        if (((m % 12) + 12) % 12 === rootPc && m + rel[0] >= lo && m + rel[rel.length - 1] <= hi)
+          candidates.push(m);
+      if (!candidates.length) return { error: '音域不夠寬，放不下這題的和弦，請拉開最低／最高音' };
+      const rootMidi = pickFrom(candidates);
+      const style = this.resolveStyle();
+      const seq = [];
+      if (chordRefChk.checked) seq.push({ midis: [60], dur: 0.8, gap: gapBase() + 0.5 });
+      this.pushChordSeq(seq, rel.map(o => rootMidi + o), style);
+      const name = NAMES[rootPc] + ch.sym;
+      const slots = [{ key: name, label: name, sub: ch.short }];
+      const twoStage = {
+        roots: pcs.map(pc => ({ pc, label: NAMES[pc] })),
+        quals: opts.map(c => ({ sym: c.sym, short: c.short }))
+      };
+      const info = invChk.checked ? INV_NAMES[inv] : null;
+      // 試聽（對完答案後）：點任一根音，用同性質、同轉位、相近八度彈該根音的和弦對照
+      const preview = r => {
+        let m = rootMidi + (((r.pc - rootPc) % 12) + 12) % 12;
+        if (m - rootMidi > 6) m -= 12;
+        const t = ctx.currentTime;
+        if (style === 'block') rel.forEach(o => playTone(m + o, t, 1.2));
+        else rel.forEach((o, i) => playTone(m + o, t + i * 0.3, 0.6));
+      };
+      return { seq, slots, pad: [], twoStage, preview, info };
     }
   }
 };
@@ -985,6 +1072,7 @@ function newQuestion() {
   }
   currentQ = q;
   answers = [];
+  pendingRoot = null;
   phase = 'idle';
   buildSlots();
   buildPad();
@@ -1056,6 +1144,10 @@ function renderSlots() {
       d.classList.add('filled');
       d.innerHTML = answers[i].label +
         (answers[i].sub ? '<span class="sol">' + answers[i].sub + '</span>' : '');
+    } else if (i === answers.length && pendingRoot) {
+      // 兩段式作答中：已選根音、待選性質
+      d.classList.add('current');
+      d.innerHTML = pendingRoot.label + '<span class="sol">選性質…</span>';
     } else {
       d.innerHTML = '<span style="color:#c2c8da">' + (i + 1) + '</span>';
       if (i === answers.length && phase === 'answering') d.classList.add('current');
@@ -1068,8 +1160,52 @@ function buildPad() {
   const usePiano = (curMode === 'single' && padMode === 'piano');
   padEl.classList.toggle('piano-mode', usePiano);
   if (usePiano) buildPianoPad();
+  else if (currentQ && currentQ.twoStage) buildTwoStagePad();
   else buildButtonsPad();
   updateButtons();
+}
+
+// 兩段式（和弦名稱）：第一段按根音，第二段按性質組成完整答案；
+// 對完答案後第一段按鈕變成試聽（同性質同轉位換根音對照）
+function buildTwoStagePad() {
+  const ts = currentQ.twoStage;
+  if (pendingRoot == null) {
+    ts.roots.forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'note-btn' + (r.label.includes('#') ? ' sharp' : '');
+      b.innerHTML = r.label + '<small>根音</small>';
+      b.addEventListener('click', () => {
+        if (phase === 'checked') {
+          ensureAudio();
+          if (currentQ.preview) currentQ.preview(r);
+          flash(b);
+          return;
+        }
+        if (phase !== 'answering' || answers.length >= currentQ.slots.length) return;
+        pendingRoot = r;
+        flash(b);
+        buildPad();
+        renderSlots();
+      });
+      padEl.appendChild(b);
+    });
+  } else {
+    ts.quals.forEach(q => {
+      const name = pendingRoot.label + q.sym;
+      const b = document.createElement('button');
+      b.className = 'note-btn';
+      b.innerHTML = name + '<small>' + q.short + '</small>';
+      b.addEventListener('click', () => {
+        if (phase !== 'answering') return;
+        answers.push({ key: name, label: name, sub: q.short });
+        pendingRoot = null;
+        buildPad();
+        renderSlots();
+        updateButtons();
+      });
+      padEl.appendChild(b);
+    });
+  }
 }
 
 function buildButtonsPad() {
@@ -1177,8 +1313,16 @@ function check() {
 }
 
 function undo() {
-  if (phase !== 'answering' || !answers.length) return;
+  if (phase !== 'answering') return;
+  if (pendingRoot) {           // 兩段式：先退掉已選的根音，回到第一段
+    pendingRoot = null;
+    buildPad();
+    renderSlots();
+    return;
+  }
+  if (!answers.length) return;
   answers.pop();
+  if (currentQ.twoStage) buildPad();
   renderSlots();
   updateButtons();
 }
@@ -1186,7 +1330,7 @@ function undo() {
 function updateButtons() {
   playBtn.disabled = (phase === 'playing');
   replayBtn.disabled = (phase === 'idle' || phase === 'playing' || !currentQ);
-  undoBtn.disabled = !(phase === 'answering' && answers.length > 0);
+  undoBtn.disabled = !(phase === 'answering' && (answers.length > 0 || pendingRoot));
   submitBtn.disabled = !(phase === 'answering' && currentQ && answers.length === currentQ.slots.length);
   // 作答中可按；對完答案後保持可按（試聽模式）
   padEl.querySelectorAll('button').forEach(b =>
@@ -1249,25 +1393,48 @@ function midiOfName(name) {
 }
 
 // ---------- 模式切換 ----------
-function switchMode(mode) {
-  curMode = mode;
+function resetQuestion() {
   playToken++;             // 讓進行中的播放排程失效
   currentQ = null;
   answers = [];
+  pendingRoot = null;
   phase = 'idle';
   slotsEl.innerHTML = '';
   padEl.innerHTML = '';
   feedbackEl.textContent = '';
   feedbackEl.className = 'feedback';
   playBtn.textContent = '▶ 播放題目';
+}
+// 「根音含黑鍵」「先播參考音」只在辨認和弦名稱時有意義；
+// 名稱題用固定音域，「最低／最高音」在該題目下隱藏
+function updateChordGoalUI() {
+  const isName = (curMode === 'chord' && chordGoalSel.value === 'name');
+  $('rootSharpsLab').style.display = isName ? '' : 'none';
+  $('chordRefLab').style.display = isName ? '' : 'none';
+  if (curMode === 'chord') {
+    $('lowLab').style.display = isName ? 'none' : '';
+    $('highLab').style.display = isName ? 'none' : '';
+  }
+}
+function switchMode(mode) {
+  curMode = mode;
+  resetQuestion();
   [...$('tabs').children].forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   document.querySelectorAll('[data-modes]').forEach(el => {
     el.style.display = el.dataset.modes.split(' ').includes(mode) ? '' : 'none';
   });
+  updateChordGoalUI();
   $('hintEl').textContent = MODES[mode].hint;
   renderStats();
   updateButtons();
 }
+chordGoalSel.addEventListener('change', () => {
+  resetQuestion();
+  updateChordGoalUI();
+  $('hintEl').textContent = MODES.chord.hint;
+  renderStats();
+  updateButtons();
+});
 $('tabs').addEventListener('click', e => {
   const b = e.target.closest('.tab');
   if (b && b.dataset.mode !== curMode) switchMode(b.dataset.mode);
@@ -1324,7 +1491,7 @@ document.addEventListener('keydown', e => {
 $('resetStatsBtn').addEventListener('click', () => {
   if (confirm('確定要清除「所有模式」的累積練習紀錄嗎？')) {
     store = { modes: {} };
-    for (const m of ['single', 'interval', 'degree', 'chord']) store.modes[m] = emptyBucket();
+    for (const m of ['single', 'interval', 'scale', 'chord', 'chordName']) store.modes[m] = emptyBucket();
     saveStore();
     try { localStorage.removeItem('dictationNoteStats'); } catch {}
     renderStats();
